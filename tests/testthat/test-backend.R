@@ -22,7 +22,7 @@ test_that("vulkan_devices marks AV1-capable devices", {
 
 test_that("detect_backend returns valid value", {
   result <- detect_backend()
-  expect_true(result %in% c("vulkan", "cpu"))
+  expect_true(result %in% c("vulkan", "vaapi", "cpu"))
 })
 
 test_that("detect_backend returns vulkan when Vulkan is available", {
@@ -34,10 +34,10 @@ test_that("detect_backend returns vulkan when Vulkan is available", {
   }
 })
 
-test_that("detect_backend falls back to cpu when Vulkan unavailable", {
+test_that("detect_backend falls back to vaapi or cpu when Vulkan unavailable", {
   if (!vulkan_available()) {
     result <- detect_backend("auto")
-    expect_equal(result, "cpu")
+    expect_true(result %in% c("vaapi", "cpu"))
   } else {
     skip("Vulkan is available, fallback not tested")
   }
@@ -48,7 +48,16 @@ test_that("detect_backend respects cpu preference", {
   expect_equal(result, "cpu")
 })
 
+test_that("detect_backend returns vaapi when available", {
+  if (AV1R:::.vaapi_av1_available()) {
+    result <- detect_backend("vaapi")
+    expect_equal(result, "vaapi")
+  } else {
+    skip("VAAPI AV1 not available on this machine")
+  }
+})
+
 test_that("detect_backend rejects invalid prefer value", {
   expect_error(detect_backend("cuda"))
-  expect_error(detect_backend("gpu"))
+  expect_error(detect_backend("amf"))
 })

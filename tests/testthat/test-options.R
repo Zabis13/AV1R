@@ -4,7 +4,15 @@ test_that("av1r_options returns correct defaults", {
   expect_equal(o$preset,   8L)
   expect_equal(o$threads,  0L)
   expect_equal(o$backend, "auto")
+  expect_null(o$bitrate)
   expect_s3_class(o, "av1r_options")
+})
+
+test_that("av1r_options accepts bitrate parameter", {
+  expect_no_error(av1r_options(bitrate = 3000))
+  expect_equal(av1r_options(bitrate = 3000)$bitrate, 3000L)
+  expect_error(av1r_options(bitrate = 0))
+  expect_error(av1r_options(bitrate = -1))
 })
 
 test_that("av1r_options validates crf range", {
@@ -25,6 +33,7 @@ test_that("av1r_options validates backend", {
   expect_no_error(av1r_options(backend = "auto"))
   expect_no_error(av1r_options(backend = "cpu"))
   expect_no_error(av1r_options(backend = "vulkan"))
+  expect_no_error(av1r_options(backend = "vaapi"))
   expect_error(av1r_options(backend = "gpu"))
   expect_error(av1r_options(backend = "invalid"))
 })

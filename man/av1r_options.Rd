@@ -4,18 +4,30 @@
 \alias{av1r_options}
 \title{AV1R encoding options}
 \usage{
-av1r_options(crf = 28L, preset = 8L, threads = 0L, backend = "auto")
+av1r_options(
+  crf = 28L,
+  preset = 8L,
+  threads = 0L,
+  bitrate = NULL,
+  backend = "auto"
+)
 }
 \arguments{
 \item{crf}{Constant Rate Factor: 0 (lossless) to 63 (worst). Default 28.
-Lower = better quality, larger file.}
+Lower = better quality, larger file. Used as fallback when \code{bitrate}
+is \code{NULL} and input bitrate cannot be detected.}
 
 \item{preset}{Encoding speed preset: 0 (slowest/best) to 13 (fastest).
 Default 8 (good balance for microscopy batch jobs).}
 
 \item{threads}{Number of CPU threads. 0 = auto-detect.}
 
-\item{backend}{\code{"auto"} (GPU if available, else CPU), \code{"vulkan"},
+\item{bitrate}{Target video bitrate in kbps (e.g. \code{3000} for 3 Mbps).
+\code{NULL} (default) = auto-detect from input (55\% of source bitrate
+for VAAPI, CRF for CPU).}
+
+\item{backend}{\code{"auto"} (best GPU if available, else CPU),
+\code{"vulkan"} (Vulkan AV1), \code{"vaapi"} (VAAPI AV1, AMD/Intel),
 or \code{"cpu"}.}
 }
 \value{
@@ -25,11 +37,14 @@ A named list of encoding parameters.
 AV1R encoding options
 }
 \examples{
-# Default options
+# Default options (auto-detect backend and bitrate)
 av1r_options()
 
 # High-quality lossless-ish for publication figures
 av1r_options(crf = 15, preset = 4)
+
+# Explicit bitrate (GPU VAAPI)
+av1r_options(bitrate = 2000, backend = "vaapi")
 
 # Fast batch conversion of large TIFF stacks
 av1r_options(crf = 32, preset = 12, threads = 16)

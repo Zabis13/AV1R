@@ -797,7 +797,8 @@ void av1r_vulkan_encode(
     int                   height,
     int                   fps,
     int                   crf,
-    std::vector<uint8_t>& out_bitstream)
+    std::vector<uint8_t>& out_bitstream,
+    std::vector<size_t>*  out_frame_sizes = nullptr)
 {
     if (!ctx.initialized)
         throw std::runtime_error("Vulkan context not initialized");
@@ -870,7 +871,10 @@ void av1r_vulkan_encode(
         vkQueueSubmit(enc.encodeQueue, 1, &si, enc.encodeFence);
         av1r_wait_fence(enc.device, enc.encodeFence);
 
+        size_t before = out_bitstream.size();
         getOutputPacket(enc, out_bitstream);
+        if (out_frame_sizes)
+            out_frame_sizes->push_back(out_bitstream.size() - before);
 
         vkFreeCommandBuffers(enc.device, enc.encodeCommandPool, 1, &cmd);
     }

@@ -3,3 +3,5 @@
 ^.*\.Rproj$
 ^\.Rhistory$
 ^\.RData$
+^TODO\.md$
+^LICENSE\.md$

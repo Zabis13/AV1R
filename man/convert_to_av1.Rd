@@ -12,19 +12,28 @@ convert_to_av1(input, output, options = av1r_options())
 
 \item{output}{Path to output file (.mp4 or .mkv).}
 
-\item{options}{An \code{av1r_options} list. Defaults to \code{av1r_options()}.}
+\item{options}{An \code{av1r_options} list. Defaults to \code{av1r_options()}.
+Use \code{backend = "cpu"} or \code{backend = "vulkan"} to force a backend.}
 }
 \value{
-Invisibly returns the ffmpeg exit code (0 = success).
+Invisibly returns 0L on success. Stops with an error on failure.
 }
 \description{
 Converts biological microscopy video files (MP4/H.264, H.265, AVI/MJPEG)
-or TIFF stacks to AV1 format. Uses ffmpeg binary for CPU encoding,
-or Vulkan GPU if available.
+or TIFF stacks to AV1 format. Automatically selects the best available
+backend: Vulkan GPU (\code{VK_KHR_VIDEO_ENCODE_AV1}) when a compatible
+device is found, otherwise CPU via FFmpeg (\code{libsvtav1} or
+\code{libaom-av1}).
 }
 \examples{
 \dontrun{
+# Auto-detect backend (GPU if available, else CPU)
 convert_to_av1("recording.mp4", "recording_av1.mp4")
-convert_to_av1("stack.tif", "stack.mp4", av1r_options(crf = 20))
+
+# Force CPU encoding
+convert_to_av1("stack.tif", "stack.mp4", av1r_options(crf = 20, backend = "cpu"))
+
+# Force GPU encoding (requires Vulkan AV1 support)
+convert_to_av1("recording.mp4", "out.mp4", av1r_options(backend = "vulkan"))
 }
 }
