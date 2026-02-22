@@ -1,0 +1,5 @@
+^\.claude$
+^\.Rproj\.user$
+^.*\.Rproj$
+^\.Rhistory$
+^\.RData$
