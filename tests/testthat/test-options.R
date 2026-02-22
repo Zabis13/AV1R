@@ -25,5 +25,11 @@ test_that("av1r_options validates backend", {
   expect_no_error(av1r_options(backend = "auto"))
   expect_no_error(av1r_options(backend = "cpu"))
   expect_no_error(av1r_options(backend = "vulkan"))
-  expect_error(av1r_options(backend = "cuda"))
+  expect_error(av1r_options(backend = "gpu"))
+  expect_error(av1r_options(backend = "invalid"))
+})
+
+test_that("print.av1r_options prints without error", {
+  o <- av1r_options()
+  expect_output(print(o))
 })
