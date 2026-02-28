@@ -16,10 +16,16 @@ AV1R automatically selects the best available backend:
 
 | Priority | Backend | How |
 |----------|---------|-----|
-| 1 | **Vulkan** | `VK_KHR_VIDEO_ENCODE_AV1` — native GPU encode (bundled headers, builds with any Vulkan SDK >= 1.3.275) |
-| 2 | **CPU** | `libsvtav1` or `libaom-av1` via FFmpeg — always available |
+| 1 | **Vulkan** | `VK_KHR_VIDEO_ENCODE_AV1` — native GPU encode |
+| 2 | **CPU** | `libsvtav1` or `libaom-av1` via FFmpeg |
 
-Vulkan AV1 encode headers are bundled in `src/vk_video/`, so no SDK upgrade is needed at build time. Runtime support depends on GPU driver (e.g. Mesa RADV for AMD).
+### Tested hardware
+
+| GPU | Driver | Status |
+|-----|--------|--------|
+| AMD Radeon RX 9070 (RDNA4) | Mesa RADV (GFX1201) | Working |
+
+Vulkan AV1 encode headers are bundled in `src/vk_video/`, so no SDK upgrade is needed at build time. Builds with any Vulkan SDK >= 1.3.275. Runtime support depends on GPU driver.
 
 ## Quick Start
 
@@ -32,27 +38,32 @@ convert_to_av1("recording.mp4", "recording_av1.mp4")
 # TIFF stack with custom settings
 convert_to_av1("stack.tif", "stack.mp4", av1r_options(crf = 20))
 
+# Batch convert entire experiment folder
+convert_folder("experiment/", "compressed/")
+
 # Check what backend will be used
 detect_backend()
 ```
 
-## Backends
-
-| Backend | How | When used |
-|---------|-----|-----------|
-| CPU | FFmpeg binary (`libsvtav1` or `libaom-av1`) | Always available |
-| GPU | Vulkan `VK_KHR_VIDEO_ENCODE_AV1` (headers bundled) | When a compatible GPU driver is present |
-
-Auto-detection order: GPU (Vulkan) → CPU (FFmpeg).
+## GPU encoding
 
 ```r
 # Check GPU availability
 vulkan_available()
 vulkan_devices()
 
-# Force CPU
+# Force GPU backend
+convert_to_av1("input.mp4", "output.mp4", av1r_options(backend = "vulkan"))
+
+# Force CPU backend
 convert_to_av1("input.mp4", "output.mp4", av1r_options(backend = "cpu"))
 ```
+
+GPU encoding uses CQP (constant quantizer) rate control. The `crf` parameter
+(0–63) is mapped nonlinearly to AV1 quantizer index (0–255), approximating
+aomenc `--cq-level` behaviour. Frames smaller than the hardware minimum
+coded extent are automatically scaled up. Audio from the original file is
+preserved automatically.
 
 ## Supported Input Formats
 
@@ -79,8 +90,8 @@ sudo apt install ffmpeg libvulkan-dev
 ```r
 av1r_options(
   crf     = 28,    # quality: 0 (best) - 63 (worst)
-  preset  = 8,     # speed: 0 (slow/best) - 13 (fast/worst)
-  threads = 0,     # 0 = auto
+  preset  = 8,     # speed: 0 (slow/best) - 13 (fast/worst), CPU only
+  threads = 0,     # 0 = auto, CPU only
   backend = "auto" # "auto", "cpu", or "vulkan"
 )
 ```
