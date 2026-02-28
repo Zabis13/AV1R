@@ -16,9 +16,10 @@ AV1R automatically selects the best available backend:
 
 | Priority | Backend | How |
 |----------|---------|-----|
-| 1 | **Vulkan** | `VK_KHR_VIDEO_ENCODE_AV1` — native GPU encode (coming soon in Mesa/RADV) |
-| 2 | **VAAPI** | `av1_vaapi` via FFmpeg — works now on AMD/Intel GPUs |
-| 3 | **CPU** | `libsvtav1` or `libaom-av1` via FFmpeg — always available |
+| 1 | **Vulkan** | `VK_KHR_VIDEO_ENCODE_AV1` — native GPU encode (bundled headers, builds with any Vulkan SDK >= 1.3.275) |
+| 2 | **CPU** | `libsvtav1` or `libaom-av1` via FFmpeg — always available |
+
+Vulkan AV1 encode headers are bundled in `src/vk_video/`, so no SDK upgrade is needed at build time. Runtime support depends on GPU driver (e.g. Mesa RADV for AMD).
 
 ## Quick Start
 
@@ -40,7 +41,7 @@ detect_backend()
 | Backend | How | When used |
 |---------|-----|-----------|
 | CPU | FFmpeg binary (`libsvtav1` or `libaom-av1`) | Always available |
-| GPU | Vulkan `VK_KHR_VIDEO_ENCODE_AV1` | When a compatible GPU is present |
+| GPU | Vulkan `VK_KHR_VIDEO_ENCODE_AV1` (headers bundled) | When a compatible GPU driver is present |
 
 Auto-detection order: GPU (Vulkan) → CPU (FFmpeg).
 

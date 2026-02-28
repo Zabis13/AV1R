@@ -5,3 +5,5 @@
 ^\.RData$
 ^TODO\.md$
 ^LICENSE\.md$
+^CRAN-SUBMISSION$
+^cran-comments\.md$

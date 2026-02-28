@@ -8,6 +8,7 @@
 #ifdef AV1R_USE_VULKAN
 
 #include <vulkan/vulkan.h>
+#include "vk_video/vulkan_video_encode_av1_khr.h"
 #include <cstring>
 #include <vector>
 #include <stdexcept>

@@ -5,8 +5,7 @@
 #ifdef AV1R_VULKAN_VIDEO_AV1
 
 #include <vulkan/vulkan.h>
-#include <vk_video/vulkan_video_codec_av1std.h>
-#include <vk_video/vulkan_video_codec_av1std_encode.h>
+#include "vk_video/vulkan_video_encode_av1_khr.h"
 #include <stdexcept>
 #include <vector>
 #include <cstdint>
@@ -664,28 +663,25 @@ static void encodeOneFrame(Av1rEncoder& enc, VkCommandBuffer cmd)
     stdPicInfo.frame_type = isKeyFrame ? STD_VIDEO_AV1_FRAME_TYPE_KEY
                                        : STD_VIDEO_AV1_FRAME_TYPE_INTER;
     stdPicInfo.current_frame_id = 0;
-    stdPicInfo.OrderHint        = static_cast<uint8_t>(enc.frameCount & 0xFF);
+    stdPicInfo.order_hint       = static_cast<uint8_t>(enc.frameCount & 0xFF);
     stdPicInfo.primary_ref_frame = isKeyFrame ? STD_VIDEO_AV1_PRIMARY_REF_NONE : 0;
     stdPicInfo.refresh_frame_flags = isKeyFrame ? 0xFF : (1u << curDpbSlot);
-
-    // Reference frame setup для inter-кадров
-    StdVideoEncodeAV1ReferenceListsInfo refLists{};
-    if (!isKeyFrame) {
-        // Все reference типы указывают на предыдущий кадр
-        for (int r = 0; r < STD_VIDEO_AV1_REFS_PER_FRAME; r++) {
-            refLists.referenceNameSlotIndices[r] = static_cast<uint8_t>(refDpbSlot);
-        }
-        stdPicInfo.pReferenceListsInfo = &refLists;
-    }
 
     VkVideoEncodeAV1PictureInfoKHR av1PicInfo{};
     av1PicInfo.sType              = VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_PICTURE_INFO_KHR;
     av1PicInfo.predictionMode     = isKeyFrame
         ? VK_VIDEO_ENCODE_AV1_PREDICTION_MODE_INTRA_ONLY_KHR
         : VK_VIDEO_ENCODE_AV1_PREDICTION_MODE_SINGLE_REFERENCE_KHR;
-    av1PicInfo.rateControlGroup   = VK_VIDEO_ENCODE_AV1_RATE_CONTROL_GROUP_INTER_KHR;
+    av1PicInfo.rateControlGroup   = isKeyFrame
+        ? VK_VIDEO_ENCODE_AV1_RATE_CONTROL_GROUP_INTRA_KHR
+        : VK_VIDEO_ENCODE_AV1_RATE_CONTROL_GROUP_PREDICTIVE_KHR;
     av1PicInfo.constantQIndex     = 0; // используется только при DISABLED rate control
     av1PicInfo.pStdPictureInfo    = &stdPicInfo;
+
+    // Reference frame setup: все reference name slots указывают на предыдущий кадр
+    for (int r = 0; r < VK_MAX_VIDEO_AV1_REFERENCES_PER_FRAME_KHR; r++) {
+        av1PicInfo.referenceNameSlotIndices[r] = isKeyFrame ? -1 : static_cast<int32_t>(refDpbSlot);
+    }
 
     // src picture resource
     VkVideoPictureResourceInfoKHR inputPicRes{};

@@ -111,7 +111,8 @@ void av1r_vulkan_encode(Av1rVulkanCtx& ctx,
                         const uint8_t* frames_nv12,
                         int n_frames, int width, int height,
                         int fps, int crf,
-                        std::vector<uint8_t>& out_bitstream);
+                        std::vector<uint8_t>& out_bitstream,
+                        std::vector<size_t>* out_frame_sizes = nullptr);
 
 // Minimal IVF muxer (AV1 raw bitstream → IVF container readable by ffmpeg)
 static void write_ivf_header(FILE* f, int width, int height, int fps, int n_frames) {
