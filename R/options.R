@@ -9,9 +9,11 @@
 #' @param bitrate Target video bitrate in kbps (e.g. \code{3000} for 3 Mbps).
 #'   \code{NULL} (default) = auto-detect from input (55\% of source bitrate
 #'   for VAAPI, CRF for CPU).
-#' @param backend \code{"auto"} (best GPU if available, else CPU),
+#' @param backend \code{"auto"} (best available: vulkan > vaapi > cpu > libaom),
 #'   \code{"vulkan"} (Vulkan AV1), \code{"vaapi"} (VAAPI AV1, AMD/Intel),
-#'   or \code{"cpu"}.
+#'   \code{"cpu"} (SVT-AV1 via ffmpeg), or \code{"libaom"} (libaom-av1 via
+#'   ffmpeg; note: \code{preset} is ignored for libaom — use ffmpeg-native
+#'   arguments such as \code{-cpu-used} directly if needed).
 #'
 #' @return A named list of encoding parameters.
 #'
@@ -34,7 +36,7 @@ av1r_options <- function(crf     = 28L,
                           threads = 0L,
                           bitrate = NULL,
                           backend = "auto") {
-  backend <- match.arg(backend, c("auto", "vulkan", "vaapi", "cpu"))
+  backend <- match.arg(backend, c("auto", "vulkan", "vaapi", "cpu", "libaom"))
   stopifnot(is.numeric(crf),    crf    >= 0, crf    <= 63)
   stopifnot(is.numeric(preset), preset >= 0, preset <= 13)
   stopifnot(is.numeric(threads), threads >= 0)

@@ -40,6 +40,16 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
 
   bk <- if (options$backend == "auto") detect_backend() else options$backend
 
+  if (bk == "libaom") {
+    message("AV1R [libaom-av1]: fallback CPU encoder.",
+            "\n  Note: 'preset' is ignored for libaom-av1.",
+            "\n  For speed control use ffmpeg -cpu-used (0-8) directly.",
+            "\n  Consider installing SVT-AV1 for better performance:",
+            "\n  Check: ffmpeg -encoders | grep svt")
+    .ffmpeg_encode_av1(input, output, options, encoder = "libaom-av1")
+    return(invisible(0L))
+  }
+
   if (bk == "vulkan") {
     # GPU path: ffmpeg decode to NV12 pipe -> Vulkan AV1 encode -> IVF -> MP4
     message("AV1R [gpu/vulkan]: Vulkan AV1 encode")
@@ -59,12 +69,22 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
     return(invisible(ret))
   }
 
-  # CPU path: ffmpeg binary
-  .ffmpeg_encode_av1(input, output, options)
+  # CPU path: prefer SVT-AV1, fallback to libaom-av1
+  if (.has_ffmpeg_encoder("libsvtav1")) {
+    .ffmpeg_encode_av1(input, output, options, encoder = "libsvtav1")
+  } else if (.has_ffmpeg_encoder("libaom-av1")) {
+    message("AV1R: SVT-AV1 (libsvtav1) not found in ffmpeg, falling back to libaom-av1.",
+            "\n  Note: 'preset' is ignored for libaom-av1.",
+            "\n  For speed control use ffmpeg -cpu-used (0-8) directly.")
+    .ffmpeg_encode_av1(input, output, options, encoder = "libaom-av1")
+  } else {
+    stop("No AV1 encoder found in ffmpeg (need libsvtav1 or libaom-av1).\n",
+         "  Check: ffmpeg -encoders | grep -E 'svt|aom'")
+  }
 }
 
 # Internal: call ffmpeg via system2()
-.ffmpeg_encode_av1 <- function(input, output, options) {
+.ffmpeg_encode_av1 <- function(input, output, options, encoder = "libsvtav1") {
   ffmpeg <- Sys.which("ffmpeg")
 
   is_tiff <- grepl("\\.tiff?$", input, ignore.case = TRUE)
@@ -76,14 +96,15 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
     c("-i", input)
   }
 
-  # Pick AV1 encoder: prefer libsvtav1, fallback to libaom-av1
-  encoder <- .pick_av1_encoder()
-
   encode_args <- c(
     "-c:v", encoder,
-    "-crf", as.character(options$crf),
-    "-preset", as.character(options$preset)
+    "-crf", as.character(options$crf)
   )
+
+  # -preset only for SVT-AV1; libaom-av1 uses -cpu-used (user must set manually)
+  if (encoder == "libsvtav1") {
+    encode_args <- c(encode_args, "-preset", as.character(options$preset))
+  }
 
   if (options$threads > 0L) {
     encode_args <- c(encode_args, "-threads", as.character(options$threads))
@@ -97,9 +118,11 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
     output
   )
 
+  label <- if (encoder == "libaom-av1") "libaom" else "cpu"
   message(sprintf(
-    "AV1R [cpu]: ffmpeg %s -> %s  [encoder=%s crf=%d preset=%d]",
-    basename(input), basename(output), encoder, options$crf, options$preset
+    "AV1R [%s]: ffmpeg %s -> %s  [encoder=%s crf=%d%s]",
+    label, basename(input), basename(output), encoder, options$crf,
+    if (encoder == "libsvtav1") sprintf(" preset=%d", options$preset) else ""
   ))
 
   ret <- system2(ffmpeg, args)
@@ -243,15 +266,3 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
   file.path(tmpdir, "frame%06d.png")
 }
 
-# Pick the best available AV1 encoder in the installed ffmpeg
-.pick_av1_encoder <- function() {
-  ffmpeg <- Sys.which("ffmpeg")
-  encoders <- tryCatch(
-    system2(ffmpeg, c("-encoders", "-v", "quiet"), stdout = TRUE, stderr = FALSE),
-    error = function(e) character(0)
-  )
-  if (any(grepl("libsvtav1", encoders)))  return("libsvtav1")
-  if (any(grepl("libaom-av1", encoders))) return("libaom-av1")
-  stop("No AV1 encoder found in ffmpeg (need libsvtav1 or libaom-av1).\n",
-       "  Install: sudo apt install ffmpeg  (Ubuntu 22.04+ includes libsvtav1)")
-}
