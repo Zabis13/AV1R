@@ -24,21 +24,21 @@
   ret <- suppressWarnings(system2(ffmpeg, c(
     "-y",
     "-vaapi_device", "/dev/dri/renderD128",
-    "-i", input,
+    "-i", shQuote(input),
     "-vf", "format=nv12,hwupload",
     "-c:v", "av1_vaapi",
     "-rc_mode", "CQP",
     "-qp", as.character(qp),
     "-an", "-t", as.character(duration),
-    tmp_out
+    shQuote(tmp_out)
   ), stdout = FALSE, stderr = FALSE))
 
   if (ret != 0L || !file.exists(tmp_out)) return(NA_real_)
 
   # Measure SSIM vs original
   lines <- suppressWarnings(system2(ffmpeg, c(
-    "-i", tmp_out,
-    "-i", input,
+    "-i", shQuote(tmp_out),
+    "-i", shQuote(input),
     "-lavfi", "ssim",
     "-t", as.character(duration),
     "-f", "null", "-"
@@ -115,8 +115,8 @@ measure_ssim <- function(original, encoded, duration = NULL) {
   t_args <- if (!is.null(duration)) c("-t", as.character(duration)) else character(0)
 
   lines <- suppressWarnings(system2(ffmpeg, c(
-    "-i", encoded,
-    "-i", original,
+    "-i", shQuote(encoded),
+    "-i", shQuote(original),
     "-lavfi", "ssim",
     t_args,
     "-f", "null", "-"

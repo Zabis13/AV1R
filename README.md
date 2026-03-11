@@ -17,7 +17,9 @@ AV1R automatically selects the best available backend:
 | Priority | Backend | How |
 |----------|---------|-----|
 | 1 | **Vulkan** | `VK_KHR_VIDEO_ENCODE_AV1` — native GPU encode |
-| 2 | **CPU** | `libsvtav1` or `libaom-av1` via FFmpeg |
+| 2 | **VAAPI** | `av1_vaapi` via FFmpeg — AMD/Intel GPU encode |
+| 3 | **CPU (SVT-AV1)** | `libsvtav1` via FFmpeg |
+| 4 | **CPU (libaom)** | `libaom-av1` via FFmpeg (fallback) |
 
 ### Tested hardware
 
@@ -26,6 +28,17 @@ AV1R automatically selects the best available backend:
 | AMD Radeon RX 9070 (RDNA4) | Mesa RADV (GFX1201) | Working |
 
 Vulkan AV1 encode headers are bundled in `src/vk_video/`, so no SDK upgrade is needed at build time. Builds with any Vulkan SDK >= 1.3.275. Runtime support depends on GPU driver.
+
+### Benchmark (5 s clip, 1920x1080, CRF 28, AMD RX 9070)
+
+| Backend | Time (s) | Size (MB) | Ratio | FPS |
+|---------|----------|-----------|-------|-----|
+| Vulkan  | 0.4      | 0.11      | 1.82x | 62.5 |
+| VAAPI   | 0.3      | 0.12      | 1.66x | 83.3 |
+| CPU (SVT-AV1) | 1.2 | 0.23   | 0.86x | 20.8 |
+| CPU (libaom)  | 13.0 | 0.20  | 0.99x | 1.9  |
+
+Reproduce: `Rscript inst/examples/benchmark_backends.R`
 
 ## Quick Start
 

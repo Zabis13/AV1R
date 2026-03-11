@@ -90,10 +90,12 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
   is_tiff <- grepl("\\.tiff?$", input, ignore.case = TRUE)
 
   # For TIFF stacks ffmpeg reads via image2 demuxer
+  # shQuote: system2() pastes args into a shell command, so paths with
+  # spaces or special characters must be quoted explicitly.
   input_args <- if (is_tiff) {
-    c("-framerate", "25", "-i", input)
+    c("-framerate", "25", "-i", shQuote(input))
   } else {
-    c("-i", input)
+    c("-i", shQuote(input))
   }
 
   encode_args <- c(
@@ -101,9 +103,11 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
     "-crf", as.character(options$crf)
   )
 
-  # -preset only for SVT-AV1; libaom-av1 uses -cpu-used (user must set manually)
+  # -preset only for SVT-AV1; libaom-av1 uses -cpu-used
   if (encoder == "libsvtav1") {
     encode_args <- c(encode_args, "-preset", as.character(options$preset))
+  } else if (encoder == "libaom-av1") {
+    encode_args <- c(encode_args, "-cpu-used", "4")
   }
 
   if (options$threads > 0L) {
@@ -115,7 +119,7 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
     input_args,
     encode_args,
     "-an",   # no audio (microscopy video is silent)
-    output
+    shQuote(output)
   )
 
   label <- if (encoder == "libaom-av1") "libaom" else "cpu"
@@ -125,11 +129,18 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
     if (encoder == "libsvtav1") sprintf(" preset=%d", options$preset) else ""
   ))
 
-  ret <- system2(ffmpeg, args)
+  stderr_file <- tempfile("av1r_ffmpeg_stderr_")
+  on.exit(unlink(stderr_file), add = TRUE)
+  ret <- system2(ffmpeg, args, stderr = stderr_file)
 
   if (ret != 0L) {
+    stderr_out <- tryCatch(
+      paste(readLines(stderr_file, warn = FALSE), collapse = "\n"),
+      error = function(e) "(could not read stderr)"
+    )
     stop("ffmpeg failed with exit code ", ret,
-         "\nCommand: ffmpeg ", paste(args, collapse = " "))
+         "\nCommand: ffmpeg ", paste(shQuote(args), collapse = " "),
+         "\nffmpeg stderr:\n", stderr_out)
   }
 
   message("AV1R: done.")
@@ -142,7 +153,7 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
   if (nchar(ffmpeg) == 0) stop("ffmpeg not found")
 
   is_tiff <- grepl("\\.tiff?$", input, ignore.case = TRUE)
-  input_args <- if (is_tiff) c("-framerate", "25", "-i", input) else c("-i", input)
+  input_args <- if (is_tiff) c("-framerate", "25", "-i", shQuote(input)) else c("-i", shQuote(input))
 
   audio_args <- if (is_tiff) c("-an") else c("-c:a", "copy")
 
@@ -174,7 +185,7 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
     "-c:v", "av1_vaapi",
     rate_args,
     audio_args,
-    output
+    shQuote(output)
   )
 
   message(sprintf(
@@ -182,10 +193,18 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
     basename(input), basename(output), rate_label
   ))
 
-  ret <- system2(ffmpeg, args)
-  if (ret != 0L)
+  stderr_file <- tempfile("av1r_ffmpeg_stderr_")
+  on.exit(unlink(stderr_file), add = TRUE)
+  ret <- system2(ffmpeg, args, stderr = stderr_file)
+  if (ret != 0L) {
+    stderr_out <- tryCatch(
+      paste(readLines(stderr_file, warn = FALSE), collapse = "\n"),
+      error = function(e) "(could not read stderr)"
+    )
     stop("ffmpeg vaapi failed with exit code ", ret,
-         "\nCommand: ffmpeg ", paste(args, collapse = " "))
+         "\nCommand: ffmpeg ", paste(shQuote(args), collapse = " "),
+         "\nffmpeg stderr:\n", stderr_out)
+  }
   invisible(ret)
 }
 
@@ -199,7 +218,7 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
       system2(ffprobe,
               c("-v", "quiet", "-select_streams", "v:0",
                 "-show_entries", "stream=bit_rate",
-                "-of", "default=noprint_wrappers=1", input),
+                "-of", "default=noprint_wrappers=1", shQuote(input)),
               stdout = TRUE, stderr = FALSE)
     ),
     error = function(e) character(0)
@@ -221,7 +240,7 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
       system2(ffprobe,
               c("-v", "quiet", "-select_streams", "v:0",
                 "-show_entries", "stream=width,height,r_frame_rate",
-                "-of", "default=noprint_wrappers=1", input),
+                "-of", "default=noprint_wrappers=1", shQuote(input)),
               stdout = TRUE, stderr = FALSE)
     ),
     error = function(e) character(0)

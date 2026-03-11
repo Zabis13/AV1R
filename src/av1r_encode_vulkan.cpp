@@ -1168,12 +1168,15 @@ void av1r_vulkan_encode_frame(
     av1r_wait_fence(se.enc.device, se.enc.encodeFence);
 
     out_packet.clear();
-    // Prepend sequence header OBU before first frame
-    if (se.enc.seqHeaderPending && !se.enc.seqHeaderData.empty()) {
+    // Prepend sequence header OBU before every keyframe (not just the first).
+    // AV1 decoders need the sequence header to start decoding at any keyframe,
+    // which is required for seek / random access to work.
+    const uint32_t GOP_LEN = 16;
+    bool isKey = (se.enc.frameCount % GOP_LEN == 0);
+    if (isKey && !se.enc.seqHeaderData.empty()) {
         out_packet.insert(out_packet.end(),
                           se.enc.seqHeaderData.begin(),
                           se.enc.seqHeaderData.end());
-        se.enc.seqHeaderPending = false;
     }
     getOutputPacket(se.enc, out_packet);
 
