@@ -2,8 +2,8 @@
     "sortOrder": [
         {
             "columnIndex": 2,
-            "ascending": true
+            "ascending": false
         }
     ],
-    "path": "/mnt/Data2/DS_projects/AV1R"
+    "path": "/mnt/Data2/DS_projects/AV1R/inst/examples"
 }

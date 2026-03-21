@@ -1,32 +1,33 @@
 #' Detect best available encoding backend
 #'
-#' Priority order: \code{"vulkan"} (Vulkan AV1 GPU) >
-#' \code{"vaapi"} (VAAPI AV1 GPU via ffmpeg, AMD/Intel) >
-#' \code{"cpu"} (SVT-AV1 via ffmpeg) >
-#' \code{"libaom"} (libaom-av1 via ffmpeg, fallback).
+#' Priority order: \code{"vaapi"} (VAAPI AV1 GPU via ffmpeg, best
+#' speed/quality ratio) > \code{"vulkan"} (Vulkan AV1 GPU, fastest but
+#' CQP only) > \code{"cpu"} (SVT-AV1 via ffmpeg).
 #'
-#' @param prefer \code{"auto"} (default), \code{"vulkan"}, \code{"vaapi"},
-#'   \code{"cpu"}, or \code{"libaom"}.
+#' @param prefer \code{"auto"} (default), \code{"vaapi"}, \code{"vulkan"},
+#'   or \code{"cpu"}.
 #'
-#' @return Character string: \code{"vulkan"}, \code{"vaapi"}, \code{"cpu"},
-#'   or \code{"libaom"}.
+#' @return Character string: \code{"vaapi"}, \code{"vulkan"}, or \code{"cpu"}.
 #' @export
 detect_backend <- function(prefer = "auto") {
-  prefer <- match.arg(prefer, c("auto", "vulkan", "vaapi", "cpu", "libaom"))
-  if (prefer == "libaom") return("libaom")
+  prefer <- match.arg(prefer, c("auto", "vulkan", "vaapi", "cpu"))
   if (prefer == "cpu")    return("cpu")
+  if (prefer == "vulkan") {
+    vk <- tryCatch(
+      .Call("R_av1r_detect_backend", "vulkan", PACKAGE = "AV1R"),
+      error = function(e) "cpu"
+    )
+    return(if (vk == "vulkan") "vulkan" else "cpu")
+  }
   if (prefer == "vaapi")  return(if (.vaapi_av1_available()) "vaapi" else "cpu")
-  # prefer == "vulkan" or "auto": try Vulkan first
+  # prefer == "auto": VAAPI first (best speed/quality), then Vulkan, then CPU
+  if (.vaapi_av1_available()) return("vaapi")
   vk <- tryCatch(
-    .Call("R_av1r_detect_backend", if (prefer == "vulkan") "vulkan" else "auto", PACKAGE = "AV1R"),
+    .Call("R_av1r_detect_backend", "auto", PACKAGE = "AV1R"),
     error = function(e) "cpu"
   )
   if (vk == "vulkan") return("vulkan")
-  # fallback: try VAAPI
-  if (.vaapi_av1_available()) return("vaapi")
-  # fallback: try SVT-AV1, then libaom-av1
   if (.has_ffmpeg_encoder("libsvtav1")) return("cpu")
-  if (.has_ffmpeg_encoder("libaom-av1")) return("libaom")
   "cpu"
 }
 
@@ -41,15 +42,15 @@ detect_backend <- function(prefer = "auto") {
   any(grepl(encoder_name, encoders, fixed = TRUE))
 }
 
-# Internal: check VAAPI AV1 encode via vainfo
+# Internal: check VAAPI AV1 encode via ffmpeg
+# vainfo may not list AV1 encode on RADV/Mesa even when it works via ffmpeg
 .vaapi_av1_available <- function() {
-  vainfo <- Sys.which("vainfo")
-  if (nchar(vainfo) == 0) return(FALSE)
-  lines <- tryCatch(
-    suppressWarnings(system2(vainfo, stdout = TRUE, stderr = FALSE)),
-    error = function(e) character(0)
-  )
-  any(grepl("VAProfileAV1", lines) & grepl("VAEntrypointEncSlice", lines))
+  ffmpeg <- Sys.which("ffmpeg")
+  if (nchar(ffmpeg) == 0) return(FALSE)
+  # Check if ffmpeg has av1_vaapi encoder
+  if (!.has_ffmpeg_encoder("av1_vaapi")) return(FALSE)
+  # Verify /dev/dri/renderD128 exists (Linux VAAPI device)
+  file.exists("/dev/dri/renderD128")
 }
 
 #' Show AV1R backend status

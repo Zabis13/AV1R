@@ -3,8 +3,7 @@
 #' Converts biological microscopy video files (MP4/H.264, H.265, AVI/MJPEG)
 #' or TIFF stacks to AV1 format. Automatically selects the best available
 #' backend: Vulkan GPU (\code{VK_KHR_VIDEO_ENCODE_AV1}) when a compatible
-#' device is found, otherwise CPU via FFmpeg (\code{libsvtav1} or
-#' \code{libaom-av1}).
+#' device is found, otherwise CPU via FFmpeg (\code{libsvtav1}).
 #'
 #' @param input  Path to input file. Supported: .mp4, .avi, .mkv, .mov,
 #'   .tif/.tiff (multi-page), or printf pattern like \code{"frame\%04d.tif"}.
@@ -38,48 +37,65 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
     on.exit(unlink(tiff_tmpdir, recursive = TRUE), add = TRUE)
   }
 
-  bk <- if (options$backend == "auto") detect_backend() else options$backend
-
-  if (bk == "libaom") {
-    message("AV1R [libaom-av1]: fallback CPU encoder.",
-            "\n  Note: 'preset' is ignored for libaom-av1.",
-            "\n  For speed control use ffmpeg -cpu-used (0-8) directly.",
-            "\n  Consider installing SVT-AV1 for better performance:",
-            "\n  Check: ffmpeg -encoders | grep svt")
-    .ffmpeg_encode_av1(input, output, options, encoder = "libaom-av1")
-    return(invisible(0L))
+  # TIFF stacks are scientific data — use tiff_crf (default 5)
+  if (is_tiff || is_seq) {
+    if (options$verbose && options$crf != options$tiff_crf) {
+      message(sprintf(
+        "AV1R: TIFF/image input. Using tiff_crf=%d instead of crf=%d.",
+        options$tiff_crf, options$crf))
+    }
+    options$crf <- options$tiff_crf
   }
 
+  bk <- if (options$backend == "auto") detect_backend() else options$backend
+
   if (bk == "vulkan") {
-    # GPU path: ffmpeg decode to NV12 pipe -> Vulkan AV1 encode -> IVF -> MP4
-    message("AV1R [gpu/vulkan]: Vulkan AV1 encode")
+    # GPU path: CQP only (RADV). Probe CPU SSIM and find matching Vulkan CRF
+    # so that quality is comparable across backends.
+    # Skip probe for TIFF/image sequences — probing requires seekable video
+    vulkan_crf <- if (is_tiff || is_seq) {
+      options$crf
+    } else {
+      .vulkan_probe_crf(input, options$crf)
+    }
+    message(sprintf("AV1R [gpu/vulkan]: Vulkan AV1 encode  [user_crf=%d → vulkan_crf=%d]",
+                    options$crf, vulkan_crf))
     info <- .ffmpeg_video_info(input)
+    ew <- info$width  - (info$width  %% 2L)
+    eh <- info$height - (info$height %% 2L)
+    ts <- if (is_tiff || is_seq) options$tiff_scale else NULL
+    sz <- .compute_output_size(ew, eh, tiff_scale = ts)
+    if (sz$scaled) {
+      message(sprintf("AV1R [vulkan]: scaling %dx%d -> %dx%d (proportional)",
+                      ew, eh, sz$width, sz$height))
+    }
     .Call("R_av1r_vulkan_encode",
           input, output,
-          info$width, info$height, info$fps, options$crf,
+          sz$width, sz$height, info$fps, as.integer(vulkan_crf),
           PACKAGE = "AV1R")
     message("AV1R: done.")
     return(invisible(0L))
   }
 
   if (bk == "vaapi") {
-    message("AV1R [gpu/vaapi]: VAAPI AV1 encode")
+    # VAAPI: 55% of input video bitrate, or explicit bitrate if set
+    message(sprintf("AV1R [gpu/vaapi]: VAAPI AV1 encode  [crf=%d]", options$crf))
     ret <- .vaapi_encode_av1(input, output, options)
     message("AV1R: done.")
     return(invisible(ret))
   }
 
-  # CPU path: prefer SVT-AV1, fallback to libaom-av1
+  # CPU path: SVT-AV1
   if (.has_ffmpeg_encoder("libsvtav1")) {
     .ffmpeg_encode_av1(input, output, options, encoder = "libsvtav1")
-  } else if (.has_ffmpeg_encoder("libaom-av1")) {
-    message("AV1R: SVT-AV1 (libsvtav1) not found in ffmpeg, falling back to libaom-av1.",
-            "\n  Note: 'preset' is ignored for libaom-av1.",
-            "\n  For speed control use ffmpeg -cpu-used (0-8) directly.")
-    .ffmpeg_encode_av1(input, output, options, encoder = "libaom-av1")
   } else {
-    stop("No AV1 encoder found in ffmpeg (need libsvtav1 or libaom-av1).\n",
-         "  Check: ffmpeg -encoders | grep -E 'svt|aom'")
+    stop("SVT-AV1 encoder (libsvtav1) not found in ffmpeg.\n",
+         "  Install SVT-AV1 support for ffmpeg:\n",
+         "    Ubuntu/Debian: sudo apt install ffmpeg libsvtav1enc-dev\n",
+         "    Fedora:        sudo dnf install ffmpeg svt-av1\n",
+         "    macOS:         brew install ffmpeg\n",
+         "    From source:   https://gitlab.com/AOMediaCodec/SVT-AV1\n",
+         "  Verify: ffmpeg -encoders | grep libsvtav1")
   }
 }
 
@@ -87,42 +103,70 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
 .ffmpeg_encode_av1 <- function(input, output, options, encoder = "libsvtav1") {
   ffmpeg <- Sys.which("ffmpeg")
 
+  is_seq <- grepl("%", input, fixed = TRUE)
   is_tiff <- grepl("\\.tiff?$", input, ignore.case = TRUE)
+  is_image <- is_seq || is_tiff
 
   # For TIFF stacks ffmpeg reads via image2 demuxer
   # shQuote: system2() pastes args into a shell command, so paths with
   # spaces or special characters must be quoted explicitly.
-  input_args <- if (is_tiff) {
+  input_args <- if (is_image) {
     c("-framerate", "25", "-i", shQuote(input))
   } else {
     c("-i", shQuote(input))
   }
 
+  # Crop input to even dimensions (grayscale→yuv420p with odd w/h causes green line)
+  info <- .ffmpeg_video_info(input)
+  ew <- info$width  - (info$width  %% 2L)
+  eh <- info$height - (info$height %% 2L)
+  needs_crop <- (ew != info$width || eh != info$height)
+
+  # Scale: user tiff_scale (if image input) + hardware minimum
+  ts <- if (is_image) options$tiff_scale else NULL
+  sz <- .compute_output_size(ew, eh, tiff_scale = ts)
+
+  scale_args <- if (sz$scaled) {
+    message(sprintf("AV1R [cpu]: scaling %dx%d -> %dx%d (proportional)",
+                    ew, eh, sz$width, sz$height))
+    if (needs_crop) {
+      c("-vf", sprintf("crop=%d:%d:0:0,scale=%d:%d", ew, eh, sz$width, sz$height))
+    } else {
+      c("-vf", sprintf("scale=%d:%d", sz$width, sz$height))
+    }
+  } else if (needs_crop) {
+    c("-vf", sprintf("crop=%d:%d:0:0", ew, eh))
+  } else {
+    character(0)
+  }
+
   encode_args <- c(
     "-c:v", encoder,
-    "-crf", as.character(options$crf)
+    "-crf", as.character(options$crf),
+    "-b:v", "0",
+    "-pix_fmt", "yuv420p"
   )
 
-  # -preset only for SVT-AV1; libaom-av1 uses -cpu-used
   if (encoder == "libsvtav1") {
-    encode_args <- c(encode_args, "-preset", as.character(options$preset))
-  } else if (encoder == "libaom-av1") {
-    encode_args <- c(encode_args, "-cpu-used", "4")
+    svt_params <- paste0("preset=", options$preset)
+    if (options$threads > 0L) {
+      svt_params <- paste0(svt_params, ":lp=", options$threads)
+    }
+    encode_args <- c(encode_args, "-svtav1-params", svt_params)
   }
 
-  if (options$threads > 0L) {
-    encode_args <- c(encode_args, "-threads", as.character(options$threads))
-  }
+  audio_args <- if (is_image) c("-an") else c("-c:a", "copy")
 
   args <- c(
     "-y",
     input_args,
+    scale_args,
     encode_args,
-    "-an",   # no audio (microscopy video is silent)
+    audio_args,
     shQuote(output)
   )
 
-  label <- if (encoder == "libaom-av1") "libaom" else "cpu"
+  label <- "cpu"
   message(sprintf(
     "AV1R [%s]: ffmpeg %s -> %s  [encoder=%s crf=%d%s]",
     label, basename(input), basename(output), encoder, options$crf,
@@ -152,10 +196,12 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
   ffmpeg <- Sys.which("ffmpeg")
   if (nchar(ffmpeg) == 0) stop("ffmpeg not found")
 
+  is_seq <- grepl("%", input, fixed = TRUE)
   is_tiff <- grepl("\\.tiff?$", input, ignore.case = TRUE)
-  input_args <- if (is_tiff) c("-framerate", "25", "-i", shQuote(input)) else c("-i", shQuote(input))
+  is_image <- is_seq || is_tiff
+  input_args <- if (is_image) c("-framerate", "25", "-i", shQuote(input)) else c("-i", shQuote(input))
 
-  audio_args <- if (is_tiff) c("-an") else c("-c:a", "copy")
+  audio_args <- if (is_image) c("-an") else c("-c:a", "copy")
 
   # Rate control priority: explicit bitrate > auto-detect from input
   # Note: RADV (Mesa) does not implement CQP for AV1 — only VBR via -b:v works
@@ -177,11 +223,38 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
     }
   }
 
+  # Crop input to even dimensions (grayscale→nv12 with odd w/h causes green line)
+  info <- .ffmpeg_video_info(input)
+  ew <- info$width  - (info$width  %% 2L)
+  eh <- info$height - (info$height %% 2L)
+  needs_crop <- (ew != info$width || eh != info$height)
+
+  # Scale: user tiff_scale (if image input) + hardware minimum
+  ts <- if (is_image) options$tiff_scale else NULL
+  sz <- .compute_output_size(ew, eh, tiff_scale = ts)
+
+  if (sz$scaled) {
+    message(sprintf("AV1R [vaapi]: scaling %dx%d -> %dx%d (proportional)",
+                    ew, eh, sz$width, sz$height))
+    if (needs_crop) {
+      vf <- sprintf("crop=%d:%d:0:0,scale=%d:%d,format=nv12,hwupload",
+                     ew, eh, sz$width, sz$height)
+    } else {
+      vf <- sprintf("scale=%d:%d,format=nv12,hwupload", sz$width, sz$height)
+    }
+  } else {
+    if (needs_crop) {
+      vf <- sprintf("crop=%d:%d:0:0,format=nv12,hwupload", ew, eh)
+    } else {
+      vf <- "format=nv12,hwupload"
+    }
+  }
+
   args <- c(
     "-y",
     "-vaapi_device", "/dev/dri/renderD128",
     input_args,
-    "-vf", "format=nv12,hwupload",
+    "-vf", vf,
     "-c:v", "av1_vaapi",
     rate_args,
     audio_args,
@@ -263,6 +336,44 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
   list(width = width, height = height, fps = fps)
 }
 
+# Internal: apply tiff_scale then ensure hardware minimum
+# Uses integer multiplier so each pixel maps to an exact NxN block.
+# Final dimensions rounded down to multiple of 8 (hardware macroblock alignment).
+# Returns list(width, height, scaled)
+.compute_output_size <- function(width, height, tiff_scale = NULL,
+                                 min_w = 320L, min_h = 128L) {
+  mult <- 1L
+
+  if (!is.null(tiff_scale)) {
+    if (length(tiff_scale) == 1L) {
+      mult <- max(1L, as.integer(round(tiff_scale)))
+    } else {
+      ratio <- min(tiff_scale[1] / width, tiff_scale[2] / height)
+      mult <- max(1L, as.integer(floor(ratio)))
+    }
+  }
+
+  # Ensure hardware minimum: increase multiplier if needed
+  while (width * mult < min_w || height * mult < min_h) {
+    mult <- mult + 1L
+  }
+
+  sw <- as.integer(width  * mult)
+  sh <- as.integer(height * mult)
+
+  # Round down to multiple of 8 (hardware macroblock alignment)
+  sw <- sw - (sw %% 8L)
+  sh <- sh - (sh %% 8L)
+
+  list(width = sw, height = sh, scaled = (mult > 1L))
+}
+
+# Internal: compute dimensions to meet hardware minimum (no user scale)
+.ensure_min_size <- function(width, height, min_w = 320L, min_h = 128L) {
+  .compute_output_size(width, height, tiff_scale = NULL,
+                       min_w = min_w, min_h = min_h)
+}
+
 # Internal: extract multi-page TIFF to PNG sequence via magick
 # Returns ffmpeg-compatible input path (printf pattern)
 .tiff_to_png_sequence <- function(tiff_path, tmpdir) {
@@ -277,8 +388,11 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
   message(sprintf("AV1R: extracting %d frames from TIFF stack...", n))
 
   for (i in seq_len(n)) {
+    frame <- img[i]
+    # Convert 16-bit grayscale to 8-bit sRGB for ffmpeg compatibility
+    frame <- magick::image_convert(frame, type = "TrueColor", depth = 8)
     out_file <- file.path(tmpdir, sprintf("frame%06d.png", i))
-    magick::image_write(img[i], out_file, format = "png")
+    magick::image_write(frame, out_file, format = "png")
   }
 
   # Return printf pattern for ffmpeg

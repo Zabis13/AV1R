@@ -26,11 +26,9 @@ Default 8 (good balance for microscopy batch jobs).}
 \code{NULL} (default) = auto-detect from input (55\% of source bitrate
 for VAAPI, CRF for CPU).}
 
-\item{backend}{\code{"auto"} (best available: vulkan > vaapi > cpu > libaom),
+\item{backend}{\code{"auto"} (best available: vulkan > vaapi > cpu),
 \code{"vulkan"} (Vulkan AV1), \code{"vaapi"} (VAAPI AV1, AMD/Intel),
-\code{"cpu"} (SVT-AV1 via ffmpeg), or \code{"libaom"} (libaom-av1 via
-ffmpeg; note: \code{preset} is ignored for libaom — use ffmpeg-native
-arguments such as \code{-cpu-used} directly if needed).}
+or \code{"cpu"} (SVT-AV1 via ffmpeg).}
 }
 \value{
 A named list of encoding parameters.

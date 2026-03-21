@@ -8,15 +8,13 @@ detect_backend(prefer = "auto")
 }
 \arguments{
 \item{prefer}{\code{"auto"} (default), \code{"vulkan"}, \code{"vaapi"},
-\code{"cpu"}, or \code{"libaom"}.}
+or \code{"cpu"}.}
 }
 \value{
-Character string: \code{"vulkan"}, \code{"vaapi"}, \code{"cpu"},
-  or \code{"libaom"}.
+Character string: \code{"vulkan"}, \code{"vaapi"}, or \code{"cpu"}.
 }
 \description{
 Priority order: \code{"vulkan"} (Vulkan AV1 GPU) >
 \code{"vaapi"} (VAAPI AV1 GPU via ffmpeg, AMD/Intel) >
-\code{"cpu"} (SVT-AV1 via ffmpeg) >
-\code{"libaom"} (libaom-av1 via ffmpeg, fallback).
+\code{"cpu"} (SVT-AV1 via ffmpeg).
 }

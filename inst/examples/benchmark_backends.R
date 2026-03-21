@@ -1,38 +1,55 @@
 #!/usr/bin/env Rscript
-# AV1R: Benchmark all available backends on the same input file
+# AV1R: Benchmark all available backends
+# Usage: Rscript benchmark_backends.R <input_file> [crf]
 
 library(AV1R)
 
 # ── Settings ──────────────────────────────────────────────────────────────
-input      <- "/mnt/Data2/DS_projects/AV_test/test.mp4"
-output_dir <- "/mnt/Data2/DS_projects/AV_test/"
-crf        <- 28L
-duration   <- 1  # seconds to encode (NULL = full file)
+input    <- "/mnt/Data2/DS_projects/AV_test/test.avi"
+crf      <- 28L
+duration <- 130  # seconds
 
-# ──────────────────────────────────────────────────────────────────────────
 if (!file.exists(input)) stop("File not found: ", input)
-if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+output_dir <- dirname(input)
 
-# Trim input to first N seconds if duration is set
-if (!is.null(duration)) {
-  bench_input <- file.path(tempdir(), paste0("av1r_bench_clip.", tools::file_ext(input)))
-  cat(sprintf("Trimming first %d s from: %s\n", duration, input))
-  ret <- system2("ffmpeg", c(
-    "-y", "-i", shQuote(input),
-    "-t", as.character(duration),
-    "-c", "copy", shQuote(bench_input)
-  ), stdout = FALSE, stderr = FALSE)
-  if (ret != 0) stop("ffmpeg trim failed")
+# ── Get video info via ffprobe ────────────────────────────────────────────
+probe_lines <- system2("ffprobe", c(
+  "-v", "quiet", "-select_streams", "v:0",
+  "-show_entries", "stream=width,height,r_frame_rate",
+  "-of", "default=noprint_wrappers=1", shQuote(input)
+), stdout = TRUE, stderr = FALSE)
+
+width  <- as.integer(sub("width=",  "", grep("^width=",  probe_lines, value = TRUE)))
+height <- as.integer(sub("height=", "", grep("^height=", probe_lines, value = TRUE)))
+fps_str <- sub("r_frame_rate=", "", grep("^r_frame_rate=", probe_lines, value = TRUE))
+fps <- if (grepl("/", fps_str)) {
+  parts <- strsplit(fps_str, "/")[[1]]
+  as.numeric(parts[1]) / as.numeric(parts[2])
 } else {
-  bench_input <- input
+  as.numeric(fps_str)
 }
 
-cat("Input:", bench_input, "\n")
-cat("Size: ", round(file.info(bench_input)$size / 1024^2, 1), "MB\n")
-cat("Output dir:", output_dir, "\n\n")
+# ── Trim clip ─────────────────────────────────────────────────────────────
+bench_input <- file.path(tempdir(), paste0("av1r_bench_clip.", tools::file_ext(input)))
+cat(sprintf("Trimming first %d s from: %s\n", duration, input))
+ret <- system2("ffmpeg", c(
+  "-y", "-i", shQuote(input),
+  "-t", as.character(duration),
+  "-c", "copy", shQuote(bench_input)
+), stdout = FALSE, stderr = FALSE)
+if (ret != 0) stop("ffmpeg trim failed")
 
-# ── Backends to test ──────────────────────────────────────────────────────
-all_backends <- c("vulkan", "vaapi", "cpu", "libaom")
+n_frames  <- as.integer(round(fps * duration))
+input_mb  <- file.info(bench_input)$size / 1024^2
+
+cat(sprintf("Input:  %s\n", basename(input)))
+cat(sprintf("Clip:   %d s, %dx%d @ %.1f fps, %d frames\n",
+            duration, width, height, fps, n_frames))
+cat(sprintf("Clip size: %.1f MB\n", input_mb))
+cat(sprintf("CRF:    %d\n\n", crf))
+
+# ── Detect backends ───────────────────────────────────────────────────────
+all_backends <- c("vulkan", "vaapi", "cpu")
 
 available <- vapply(all_backends, function(bk) {
   tryCatch({
@@ -42,27 +59,21 @@ available <- vapply(all_backends, function(bk) {
 }, logical(1))
 
 backends <- names(available[available])
-cat("Available backends:", paste(backends, collapse = ", "), "\n")
-cat("CRF:", crf, "\n\n")
-
+cat("Backends:", paste(backends, collapse = ", "), "\n\n")
 if (length(backends) == 0) stop("No backends available")
 
 # ── Benchmark ─────────────────────────────────────────────────────────────
 base <- sub("\\.[^.]+$", "", basename(input))
 results <- data.frame(
-  backend   = character(),
-  time_sec  = numeric(),
-  size_mb   = numeric(),
-  ratio     = numeric(),
+  backend  = character(),
+  time_sec = numeric(),
+  size_mb  = numeric(),
   stringsAsFactors = FALSE
 )
 
-input_mb <- file.info(bench_input)$size / 1024^2
-
 for (bk in backends) {
   out <- file.path(output_dir, paste0(base, "_av1_", bk, ".mp4"))
-  cat(sprintf("── %s ", toupper(bk)))
-  cat(strrep("-", max(1, 60 - nchar(bk))), "\n")
+  cat(sprintf("── %s %s\n", toupper(bk), strrep("-", max(1, 55 - nchar(bk)))))
 
   elapsed <- tryCatch({
     t0 <- proc.time()["elapsed"]
@@ -73,46 +84,57 @@ for (bk in backends) {
     NA_real_
   })
 
-  if (!is.na(elapsed) && file.exists(out)) {
-    out_mb <- file.info(out)$size / 1024^2
-    results <- rbind(results, data.frame(
-      backend  = bk,
-      time_sec = round(as.numeric(elapsed), 1),
-      size_mb  = round(out_mb, 2),
-      ratio    = round(input_mb / out_mb, 2)
-    ))
-    cat("  Output:", out, "\n")
+  out_mb <- if (!is.na(elapsed) && file.exists(out)) {
+    file.info(out)$size / 1024^2
   } else {
-    results <- rbind(results, data.frame(
-      backend = bk, time_sec = NA, size_mb = NA, ratio = NA
-    ))
+    NA_real_
   }
+
+  # Measure SSIM vs original
+  ssim <- if (!is.na(elapsed) && file.exists(out)) {
+    measure_ssim(bench_input, out, duration = duration)
+  } else {
+    NA_real_
+  }
+
+  results <- rbind(results, data.frame(
+    backend  = bk,
+    time_sec = as.numeric(elapsed),
+    size_mb  = out_mb,
+    ssim     = ssim
+  ))
   cat("\n")
 }
 
 # ── Results ───────────────────────────────────────────────────────────────
-n_frames <- as.numeric(system2("ffprobe", c(
-  "-v", "quiet", "-count_frames", "-select_streams", "v:0",
-  "-show_entries", "stream=nb_read_frames",
-  "-of", "default=noprint_wrappers=1:nokey=1",
-  shQuote(bench_input)
-), stdout = TRUE, stderr = FALSE))
+cat(strrep("=", 78), "\n")
+cpu_time <- results$time_sec[results$backend == "cpu"]
+cpu_time <- if (length(cpu_time) == 1 && !is.na(cpu_time)) cpu_time else NA_real_
 
-cat("\n")
-cat(strrep("=", 62), "\n")
-cat(sprintf("  %-10s %10s %10s %10s %10s\n",
-            "Backend", "Time (s)", "Size (MB)", "Ratio", "FPS"))
-cat(strrep("-", 62), "\n")
+cat(sprintf("  %-10s %10s %10s %12s %8s %10s %10s\n",
+            "Backend", "Time (s)", "Size (MB)", "Compression", "SSIM", "FPS", "vs CPU"))
+cat(strrep("-", 88), "\n")
 
 for (i in seq_len(nrow(results))) {
   r <- results[i, ]
+  comp_str <- if (!is.na(r$size_mb) && r$size_mb > 0)
+    sprintf("%11.1fx", input_mb / r$size_mb) else sprintf("%12s", "-")
+  ssim_str <- if (!is.na(r$ssim))
+    sprintf("%8.4f", r$ssim) else sprintf("%8s", "-")
   fps_str <- if (!is.na(r$time_sec) && r$time_sec > 0)
     sprintf("%10.1f", n_frames / r$time_sec) else sprintf("%10s", "-")
-  cat(sprintf("  %-10s %10s %10s %10s %s\n",
+  speedup_str <- if (!is.na(cpu_time) && !is.na(r$time_sec) && r$time_sec > 0)
+    sprintf("%9.1fx", cpu_time / r$time_sec) else sprintf("%10s", "-")
+  cat(sprintf("  %-10s %10s %10s %s %s %s %s\n",
               r$backend,
               if (is.na(r$time_sec)) "FAILED" else sprintf("%.1f", r$time_sec),
               if (is.na(r$size_mb))  "-"      else sprintf("%.2f", r$size_mb),
-              if (is.na(r$ratio))    "-"      else sprintf("%.2fx", r$ratio),
-              fps_str))
+              comp_str,
+              ssim_str,
+              fps_str,
+              speedup_str))
 }
-cat(strrep("=", 62), "\n")
+cat(strrep("=", 88), "\n")
+cat(sprintf("\nCompression = clip size (%.1f MB) / encoded size\n", input_mb))
+cat("vs CPU = CPU time / backend time (higher = faster than CPU)\n")
+cat("SSIM: 1.0 = identical, >= 0.97 visually transparent, < 0.93 noticeable loss\n")

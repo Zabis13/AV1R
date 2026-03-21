@@ -1,3 +1,54 @@
+# AV1R 0.1.3
+
+## TIFF scaling
+
+* New `tiff_scale` parameter in `av1r_options()` for explicit control of
+  TIFF/image sequence output resolution. Supports multiplier (e.g. `2` for 2x)
+  or bounding box (e.g. `c(1920, 1080)` to fit into 1080p). Aspect ratio is
+  always preserved — no distortion.
+* Frames smaller than hardware minimum (VAAPI: 320x128) are automatically
+  scaled up proportionally across all backends (CPU, VAAPI, Vulkan).
+* Example script: `inst/examples/tiff_scale.R`.
+
+## Batch conversion
+
+* New example script `inst/examples/batch_convert.R` for batch folder
+  conversion with summary table (input/output size, compression ratio).
+* `tiff_crf` parameter (default 5) automatically applied to TIFF/image
+  input for near-lossless microscopy encoding. Overrides `crf`.
+* `verbose` option controls informational messages.
+
+## Quality control architecture
+
+* Each backend now uses the approach best suited to its rate control:
+  - **CPU (SVT-AV1)**: CRF passed directly — SVT-AV1 adapts to content
+  - **Vulkan**: CRF passed directly as QP — CQP mode (RADV limitation)
+  - **VAAPI**: 55% of input video bitrate via ffprobe — adapts to content
+* Removed calibration table approach (0.1.3-dev): empirical testing showed
+  fixed CRF→bitrate tables are content-dependent and break on different
+  input formats (MP4 vs AVI). Adaptive approach is simpler and more robust.
+* Vulkan CQP limitation documented: RADV only supports constant quantizer
+  (no VBR/CRF), resulting in ~0.93 SSIM vs ~0.96 for CPU/VAAPI at the same
+  bitrate. This is a driver limitation, not a bug.
+
+## CPU encoding fixes
+
+* SVT-AV1 preset and thread count now passed via `-svtav1-params` instead
+  of `-preset` and `-threads` which had no effect on libsvtav1.
+* Added `-pix_fmt yuv420p` for explicit pixel format.
+
+## Audio preservation
+
+* CPU path now preserves audio tracks from input files (`-c:a copy`)
+  instead of stripping them (`-an`). TIFF inputs still use `-an` since
+  they have no audio.
+
+## Benchmark improvements
+
+* Added "vs CPU" column showing speedup relative to CPU backend.
+* Added calibration scripts: `calibrate_crf.R`, `calibrate_raw.R`,
+  `calibrate_vaapi_bitrate.R` for measuring backend response curves.
+
 # AV1R 0.1.2
 
 ## Minimum coded extent handling
@@ -70,7 +121,7 @@
 
 ## Initial Release
 
-* CPU encoding via FFmpeg (`libsvtav1` / `libaom-av1`).
+* CPU encoding via FFmpeg (`libsvtav1`).
 * Automatic backend selection: GPU (Vulkan) → CPU (FFmpeg).
 * Supports H.264, H.265, AVI/MJPEG, TIFF stacks, and TIFF sequences as input.
 * `convert_to_av1()` for single-file and batch conversion.

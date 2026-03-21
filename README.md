@@ -16,10 +16,9 @@ AV1R automatically selects the best available backend:
 
 | Priority | Backend | How |
 |----------|---------|-----|
-| 1 | **Vulkan** | `VK_KHR_VIDEO_ENCODE_AV1` — native GPU encode |
-| 2 | **VAAPI** | `av1_vaapi` via FFmpeg — AMD/Intel GPU encode |
+| 1 | **VAAPI** | `av1_vaapi` via FFmpeg — best speed/quality (AMD/Intel) |
+| 2 | **Vulkan** | `VK_KHR_VIDEO_ENCODE_AV1` — fastest, CQP only |
 | 3 | **CPU (SVT-AV1)** | `libsvtav1` via FFmpeg |
-| 4 | **CPU (libaom)** | `libaom-av1` via FFmpeg (fallback) |
 
 ### Tested hardware
 
@@ -29,14 +28,16 @@ AV1R automatically selects the best available backend:
 
 Vulkan AV1 encode headers are bundled in `src/vk_video/`, so no SDK upgrade is needed at build time. Builds with any Vulkan SDK >= 1.3.275. Runtime support depends on GPU driver.
 
-### Benchmark (5 s clip, 1920x1080, CRF 28, AMD RX 9070)
+### Benchmark (30 s clip, 1920x1080, CRF 28, AMD RX 9070)
 
-| Backend | Time (s) | Size (MB) | Ratio | FPS |
-|---------|----------|-----------|-------|-----|
-| Vulkan  | 0.4      | 0.11      | 1.82x | 62.5 |
-| VAAPI   | 0.3      | 0.12      | 1.66x | 83.3 |
-| CPU (SVT-AV1) | 1.2 | 0.23   | 0.86x | 20.8 |
-| CPU (libaom)  | 13.0 | 0.20  | 0.99x | 1.9  |
+| Backend | Time (s) | Size (MB) | Compression | SSIM | FPS | vs CPU |
+|---------|----------|-----------|-------------|------|-----|--------|
+| Vulkan  | 2.9      | 3.31      | 1.9x | 0.9339 | 245.9 | 4.0x |
+| VAAPI   | 2.0      | 3.97      | 1.6x | 0.9609 | 363.3 | 5.9x |
+| CPU (SVT-AV1) | 11.7 | 8.09  | 0.8x | 0.9645 | 61.6 | 1.0x |
+
+Compression = input clip size / encoded size. SSIM >= 0.97 visually transparent.
+vs CPU = CPU time / backend time (higher = faster).
 
 Reproduce: `Rscript inst/examples/benchmark_backends.R`
 
@@ -72,11 +73,23 @@ convert_to_av1("input.mp4", "output.mp4", av1r_options(backend = "vulkan"))
 convert_to_av1("input.mp4", "output.mp4", av1r_options(backend = "cpu"))
 ```
 
-GPU encoding uses CQP (constant quantizer) rate control. The `crf` parameter
-(0–63) is mapped nonlinearly to AV1 quantizer index (0–255), approximating
-aomenc `--cq-level` behaviour. Frames smaller than the hardware minimum
-coded extent are automatically scaled up. Audio from the original file is
-preserved automatically.
+Each backend uses the quality control approach best suited to its rate control:
+
+| Backend | Quality parameter | Adaptation |
+|---------|-------------------|------------|
+| CPU (SVT-AV1) | CRF directly | SVT-AV1 adapts to content |
+| Vulkan | CRF directly (CQP) | Constant quantizer |
+| VAAPI | 55% of input bitrate | Adapts via ffprobe |
+
+Frames smaller than the hardware minimum coded extent are automatically
+scaled up proportionally (no distortion). Audio from the original file
+is preserved automatically.
+
+**Note:** Vulkan uses CQP (constant quantizer) rate control — the only mode
+currently working on RADV. CQP does not adapt to scene complexity, so Vulkan
+produces slightly lower SSIM (~0.93) compared to CPU/VAAPI (~0.96). This is
+a driver limitation; VBR/CRF support will improve quality when RADV implements
+it.
 
 ## Supported Input Formats
 
@@ -90,7 +103,7 @@ preserved automatically.
 
 ## System Requirements
 
-- **FFmpeg >= 4.4** with `libsvtav1` or `libaom-av1` (required for CPU encoding)
+- **FFmpeg >= 4.4** with `libsvtav1` (required for CPU encoding)
 - **libvulkan-dev** (optional, for GPU encoding on Linux)
 
 ```bash
@@ -98,14 +111,31 @@ preserved automatically.
 sudo apt install ffmpeg libvulkan-dev
 ```
 
+## TIFF scaling
+
+TIFF stacks use near-lossless CRF 5 by default (`tiff_crf`). Output resolution can be controlled via `tiff_scale`:
+
+```r
+# 2x magnification (proportional, no distortion)
+convert_to_av1("stack.tif", "stack.mp4", av1r_options(tiff_scale = 2))
+
+# Fit into 1920x1080 bounding box (proportional)
+convert_to_av1("stack.tif", "stack.mp4", av1r_options(tiff_scale = c(1920, 1080)))
+```
+
+See `inst/examples/tiff_scale.R` for more examples.
+
 ## Options
 
 ```r
 av1r_options(
-  crf     = 28,    # quality: 0 (best) - 63 (worst)
-  preset  = 8,     # speed: 0 (slow/best) - 13 (fast/worst), CPU only
-  threads = 0,     # 0 = auto, CPU only
-  backend = "auto" # "auto", "cpu", or "vulkan"
+  crf        = 28,    # quality: 0 (best) - 63 (worst)
+  preset     = 8,     # speed: 0 (slow/best) - 13 (fast/worst), CPU only
+  threads    = 0,     # 0 = auto, CPU only
+  tiff_crf   = 5,     # CRF for TIFF input (near-lossless)
+  tiff_scale = NULL,  # NULL, multiplier (e.g. 2), or c(width, height)
+  verbose    = TRUE,  # informational messages
+  backend    = "auto" # "auto", "cpu", "vaapi", or "vulkan"
 )
 ```
 

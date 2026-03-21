@@ -1002,6 +1002,8 @@ static size_t getOutputPacket(Av1rEncoder& enc, std::vector<uint8_t>& out)
 // ============================================================================
 static void destroyEncoder(Av1rEncoder& enc)
 {
+    vkDeviceWaitIdle(enc.device);
+
     if (enc.bitstreamPtr)
         vkUnmapMemory(enc.device, enc.bitstreamMemory);
     if (enc.bitstreamBuf != VK_NULL_HANDLE)
