@@ -1,5 +1,7 @@
 # AV1R
 
+[![R-hub check on the R Consortium cluster](https://github.com/r-hub2/separate-jaguar-AV1R/actions/workflows/rhub-rc.yaml/badge.svg)](https://github.com/r-hub2/separate-jaguar-AV1R/actions/workflows/rhub-rc.yaml)
+
 **AV1 video encoding for biological microscopy data.**
 
 AV1R is an R package for biologists that converts legacy microscopy video formats (H.264/H.265, AVI/MJPEG, TIFF stacks) to the modern AV1 codec with minimal quality loss.
