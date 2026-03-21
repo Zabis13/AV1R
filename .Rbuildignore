@@ -8,3 +8,4 @@
 ^CRAN-SUBMISSION$
 ^cran-comments\.md$
 ^CLAUDE\.md$
+^VP_VULKANINFO_.*\.json$

@@ -75,15 +75,37 @@ convert_to_av1("input.mp4", "output.mp4", av1r_options(backend = "cpu"))
 
 Each backend uses the quality control approach best suited to its rate control:
 
-| Backend | Quality parameter | Adaptation |
-|---------|-------------------|------------|
-| CPU (SVT-AV1) | CRF directly | SVT-AV1 adapts to content |
-| Vulkan | CRF directly (CQP) | Constant quantizer |
-| VAAPI | 55% of input bitrate | Adapts via ffprobe |
+| Backend | Video input | TIFF/image input |
+|---------|-------------|------------------|
+| CPU (SVT-AV1) | CRF directly | CRF directly |
+| Vulkan | CRF directly (CQP) | CRF directly (CQP) |
+| VAAPI | VBR at 55% of input bitrate | CQP (CRF mapped to QP 0–255) |
 
 Frames smaller than the hardware minimum coded extent are automatically
 scaled up proportionally (no distortion). Audio from the original file
 is preserved automatically.
+
+### CRF equivalence across backends (TIFF, mitosis.tif, 510 frames)
+
+CRF is a unified quality parameter (0 = best, 63 = worst). Since each backend
+uses a different internal quantizer scale, AV1R maps CRF automatically.
+The table below shows equivalent settings calibrated by file size:
+
+| CRF | CPU (KB) | VAAPI QP | VAAPI (KB) | Vulkan CRF | Vulkan (KB) |
+|----:|--------:|---------:|----------:|-----------:|----------:|
+|   1 |  3815.5 |        8 |    3800.8 |          2 |    3369.2 |
+|   3 |  2766.5 |       11 |    2822.4 |          2 |    3369.2 |
+|   5 |  1983.7 |       14 |    1982.1 |          3 |    2064.3 |
+|   8 |   924.4 |       24 |     952.6 |          5 |     955.0 |
+|  10 |   578.7 |       31 |     597.1 |          7 |     548.9 |
+|  15 |   264.4 |       50 |     278.7 |         11 |     260.5 |
+|  20 |   162.1 |       75 |     156.5 |         15 |     163.8 |
+|  30 |    84.4 |      110 |      82.0 |         30 |      61.9 |
+|  40 |    53.2 |      150 |      53.3 |         40 |      46.9 |
+|  50 |    38.8 |      190 |      38.8 |         50 |      37.6 |
+|  63 |    25.4 |      255 |      29.5 |         63 |      30.5 |
+
+Reproduce: `Rscript inst/examples/calibrate_vaapi_cqp.R`
 
 **Note:** Vulkan uses CQP (constant quantizer) rate control — the only mode
 currently working on RADV. CQP does not adapt to scene complexity, so Vulkan
@@ -98,6 +120,9 @@ it.
 | H.264 / MP4 | `.mp4`, `.mkv`, `.mov` |
 | H.265 / HEVC | `.mp4`, `.mkv` |
 | AVI / MJPEG | `.avi` |
+| FLV | `.flv` |
+| MPEG-1/2 | `.mpg`, `.mpeg` |
+| WebM (VP8/VP9) | `.webm` |
 | TIFF stack | `.tif`, `.tiff` |
 | TIFF sequence | `frame%04d.tif` |
 
@@ -111,9 +136,16 @@ it.
 sudo apt install ffmpeg libvulkan-dev
 ```
 
-## TIFF scaling
+## TIFF stacks
 
-TIFF stacks use near-lossless CRF 5 by default (`tiff_crf`). Output resolution can be controlled via `tiff_scale`:
+TIFF stacks use near-lossless CRF 5 by default (`tiff_crf`). Output resolution can be controlled via `tiff_scale`.
+
+> **Note for quantitative microscopy:** AV1 is a lossy codec even at CRF 1.
+> If your workflow relies on pixel intensity measurements (fluorescence
+> quantification, ratiometric imaging, colocalization analysis), lossy
+> compression will alter the data. For such use cases, keep the original
+> TIFF/PNG files for analysis and use AV1R only for visualization, sharing,
+> and archival of preview copies. Lossless alternatives: TIFF, PNG, FFV1.
 
 ```r
 # 2x magnification (proportional, no distortion)

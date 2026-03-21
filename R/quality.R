@@ -130,7 +130,7 @@
   ffmpeg <- Sys.which("ffmpeg")
   duration <- .ffmpeg_duration(input)
   if (is.na(duration) || duration < 2) {
-    # Too short — use whole file as single probe
+    # Too short -- use whole file as single probe
     return(input)
   }
 
@@ -259,10 +259,10 @@
     prev_diff <- diff
 
     if (ssim < target_ssim) {
-      # Quality too low → decrease CRF (better quality)
+      # Quality too low -> decrease CRF (better quality)
       hi <- mid
     } else {
-      # Quality too high → increase CRF (more compression)
+      # Quality too high -> increase CRF (more compression)
       lo <- mid + 1L
     }
 

@@ -1,9 +1,13 @@
 {
     "sortOrder": [
         {
+            "columnIndex": 4,
+            "ascending": false
+        },
+        {
             "columnIndex": 2,
             "ascending": false
         }
     ],
-    "path": "/mnt/Data2/DS_projects/AV1R/inst/examples"
+    "path": "/mnt/Data2/DS_projects/AV1R"
 }

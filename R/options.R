@@ -1,6 +1,6 @@
 #' AV1R encoding options
 #'
-#' @param crf     Constant Rate Factor: 0 (lossless) to 63 (worst). Default 28.
+#' @param crf     Constant Rate Factor: 0 (best) to 63 (worst). Default 28.
 #'   Lower = better quality, larger file. Used as fallback when \code{bitrate}
 #'   is \code{NULL} and input bitrate cannot be detected.
 #' @param preset  Encoding speed preset: 0 (slowest/best) to 13 (fastest).

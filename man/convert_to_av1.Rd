@@ -7,7 +7,7 @@
 convert_to_av1(input, output, options = av1r_options())
 }
 \arguments{
-\item{input}{Path to input file. Supported: .mp4, .avi, .mkv, .mov,
+\item{input}{Path to input file. Supported: .mp4, .avi, .mkv, .mov, .flv, .mpg, .mpeg, .webm,
 .tif/.tiff (multi-page), or printf pattern like \code{"frame\%04d.tif"}.}
 
 \item{output}{Path to output file (.mp4 or .mkv).}

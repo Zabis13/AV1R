@@ -5,7 +5,7 @@
 #' backend: Vulkan GPU (\code{VK_KHR_VIDEO_ENCODE_AV1}) when a compatible
 #' device is found, otherwise CPU via FFmpeg (\code{libsvtav1}).
 #'
-#' @param input  Path to input file. Supported: .mp4, .avi, .mkv, .mov,
+#' @param input  Path to input file. Supported: .mp4, .avi, .mkv, .mov, .flv, .mpg, .mpeg, .webm,
 #'   .tif/.tiff (multi-page), or printf pattern like \code{"frame\%04d.tif"}.
 #' @param output Path to output file (.mp4 or .mkv).
 #' @param options An \code{av1r_options} list. Defaults to \code{av1r_options()}.
@@ -27,6 +27,22 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
   if (!is_seq && !file.exists(input)) stop("Input file not found: ", input)
   check_ffmpeg()
 
+  # Warn if input is already an efficient codec (VP9/AV1)
+  input_codec <- NA_character_
+  input_size  <- NA_real_
+  if (!is_seq) {
+    input_codec <- .ffmpeg_video_codec(input)
+    if (!is.na(input_codec) && input_codec %in% c("av1", "vp9")) {
+      warning(sprintf(
+        "Input '%s' is already encoded with %s. ",
+        basename(input), toupper(input_codec)),
+        "Re-encoding to AV1 may increase file size. ",
+        "Consider skipping this file unless you need a different container or parameters.",
+        call. = FALSE)
+    }
+    input_size <- file.info(input)$size
+  }
+
   # Multi-page TIFF: extract pages to temp PNG sequence via magick
   # Skip if input is already an image sequence pattern (contains %)
   is_tiff <- !is_seq && grepl("\\.tiff?$", input, ignore.case = TRUE)
@@ -37,7 +53,7 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
     on.exit(unlink(tiff_tmpdir, recursive = TRUE), add = TRUE)
   }
 
-  # TIFF stacks are scientific data — use tiff_crf (default 5)
+  # TIFF stacks are scientific data -- use tiff_crf (default 5)
   if (is_tiff || is_seq) {
     if (options$verbose && options$crf != options$tiff_crf) {
       message(sprintf(
@@ -52,13 +68,14 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
   if (bk == "vulkan") {
     # GPU path: CQP only (RADV). Probe CPU SSIM and find matching Vulkan CRF
     # so that quality is comparable across backends.
-    # Skip probe for TIFF/image sequences — probing requires seekable video
+    # For TIFF/image: use calibrated lookup (probing requires seekable video)
+    # For video: probe SSIM dynamically
     vulkan_crf <- if (is_tiff || is_seq) {
-      options$crf
+      .crf_to_vulkan_crf(options$crf)
     } else {
       .vulkan_probe_crf(input, options$crf)
     }
-    message(sprintf("AV1R [gpu/vulkan]: Vulkan AV1 encode  [user_crf=%d → vulkan_crf=%d]",
+    message(sprintf("AV1R [gpu/vulkan]: Vulkan AV1 encode  [user_crf=%d -> vulkan_crf=%d]",
                     options$crf, vulkan_crf))
     info <- .ffmpeg_video_info(input)
     ew <- info$width  - (info$width  %% 2L)
@@ -73,20 +90,11 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
           input, output,
           sz$width, sz$height, info$fps, as.integer(vulkan_crf),
           PACKAGE = "AV1R")
-    message("AV1R: done.")
-    return(invisible(0L))
-  }
-
-  if (bk == "vaapi") {
-    # VAAPI: 55% of input video bitrate, or explicit bitrate if set
+  } else if (bk == "vaapi") {
     message(sprintf("AV1R [gpu/vaapi]: VAAPI AV1 encode  [crf=%d]", options$crf))
-    ret <- .vaapi_encode_av1(input, output, options)
-    message("AV1R: done.")
-    return(invisible(ret))
-  }
-
-  # CPU path: SVT-AV1
-  if (.has_ffmpeg_encoder("libsvtav1")) {
+    .vaapi_encode_av1(input, output, options)
+  } else if (.has_ffmpeg_encoder("libsvtav1")) {
+    # CPU path: SVT-AV1
     .ffmpeg_encode_av1(input, output, options, encoder = "libsvtav1")
   } else {
     stop("SVT-AV1 encoder (libsvtav1) not found in ffmpeg.\n",
@@ -97,6 +105,23 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
          "    From source:   https://gitlab.com/AOMediaCodec/SVT-AV1\n",
          "  Verify: ffmpeg -encoders | grep libsvtav1")
   }
+
+  # Warn if output is larger than input (re-encoding efficient codecs)
+  if (!is.na(input_size) && file.exists(output)) {
+    output_size <- file.info(output)$size
+    if (output_size > input_size) {
+      warning(sprintf(
+        "Output '%s' (%.1f MB) is larger than input (%.1f MB). ",
+        basename(output), output_size / 1024^2, input_size / 1024^2),
+        "Input may already be efficiently encoded",
+        if (!is.na(input_codec)) paste0(" (", input_codec, ")") else "",
+        ".",
+        call. = FALSE)
+    }
+  }
+
+  message("AV1R: done.")
+  invisible(0L)
 }
 
 # Internal: call ffmpeg via system2()
@@ -116,7 +141,7 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
     c("-i", shQuote(input))
   }
 
-  # Crop input to even dimensions (grayscale→yuv420p with odd w/h causes green line)
+  # Crop input to even dimensions (grayscale->yuv420p with odd w/h causes green line)
   info <- .ffmpeg_video_info(input)
   ew <- info$width  - (info$width  %% 2L)
   eh <- info$height - (info$height %% 2L)
@@ -187,7 +212,6 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
          "\nffmpeg stderr:\n", stderr_out)
   }
 
-  message("AV1R: done.")
   invisible(ret)
 }
 
@@ -203,31 +227,46 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
 
   audio_args <- if (is_image) c("-an") else c("-c:a", "copy")
 
-  # Rate control priority: explicit bitrate > auto-detect from input
-  # Note: RADV (Mesa) does not implement CQP for AV1 — only VBR via -b:v works
+  # Rate control:
+  #   - Explicit bitrate: always use VBR -b:v (user override)
+  #   - TIFF/image input: CQP mode -- map CRF (0-63) -> QP (0-255)
+  #   - Video input: VBR at 55% of source bitrate (AV1 is ~45% more efficient)
   if (!is.null(options$bitrate)) {
     target_bps <- as.integer(options$bitrate) * 1000L
     rate_args  <- c("-b:v", as.character(target_bps))
     rate_label <- sprintf("bitrate=%dk (manual)", options$bitrate)
+  } else if (is_image) {
+    vaapi_qp <- .crf_to_vaapi_qp(options$crf)
+    rate_args  <- c("-rc_mode", "CQP", "-global_quality", as.character(vaapi_qp))
+    rate_label <- sprintf("CQP qp=%d (from crf=%d)", vaapi_qp, options$crf)
   } else {
     input_bitrate <- .ffmpeg_video_bitrate(input)
     if (!is.na(input_bitrate) && input_bitrate > 0) {
-      # AV1 is ~45% more efficient than H.264 -> target 55% of input bitrate
       target_bps <- as.integer(input_bitrate * 0.55)
       rate_args  <- c("-b:v", as.character(target_bps))
       rate_label <- sprintf("bitrate=%dk (auto, 55%% of input)", target_bps %/% 1000L)
     } else {
-      # Fallback for TIFF stacks: fixed 4 Mbps
-      rate_args  <- c("-b:v", "4000000")
-      rate_label <- "bitrate=4000k (default)"
+      # Fallback: estimate bitrate from file size and duration
+      duration <- .ffmpeg_duration(input)
+      fsize    <- file.info(input)$size
+      if (!is.na(duration) && duration > 0 && !is.na(fsize) && fsize > 0) {
+        est_bps    <- as.integer((fsize * 8) / duration)
+        target_bps <- as.integer(est_bps * 0.55)
+        rate_args  <- c("-b:v", as.character(target_bps))
+        rate_label <- sprintf("bitrate=%dk (auto, 55%% of est. %dk)",
+                              target_bps %/% 1000L, est_bps %/% 1000L)
+      } else {
+        rate_args  <- c("-b:v", "4000000")
+        rate_label <- "bitrate=4000k (default)"
+      }
     }
   }
 
-  # Crop input to even dimensions (grayscale→nv12 with odd w/h causes green line)
+  # Align to multiple of 8 (VAAPI macroblock requirement -- avoids green line)
   info <- .ffmpeg_video_info(input)
-  ew <- info$width  - (info$width  %% 2L)
-  eh <- info$height - (info$height %% 2L)
-  needs_crop <- (ew != info$width || eh != info$height)
+  ew <- info$width  - (info$width  %% 8L)
+  eh <- info$height - (info$height %% 8L)
+  needs_align <- (ew != info$width || eh != info$height)
 
   # Scale: user tiff_scale (if image input) + hardware minimum
   ts <- if (is_image) options$tiff_scale else NULL
@@ -235,19 +274,19 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
 
   if (sz$scaled) {
     message(sprintf("AV1R [vaapi]: scaling %dx%d -> %dx%d (proportional)",
-                    ew, eh, sz$width, sz$height))
-    if (needs_crop) {
+                    info$width, info$height, sz$width, sz$height))
+    if (needs_align) {
       vf <- sprintf("crop=%d:%d:0:0,scale=%d:%d,format=nv12,hwupload",
                      ew, eh, sz$width, sz$height)
     } else {
       vf <- sprintf("scale=%d:%d,format=nv12,hwupload", sz$width, sz$height)
     }
+  } else if (needs_align) {
+    message(sprintf("AV1R [vaapi]: cropping %dx%d -> %dx%d (align to 8)",
+                    info$width, info$height, ew, eh))
+    vf <- sprintf("crop=%d:%d:0:0,format=nv12,hwupload", ew, eh)
   } else {
-    if (needs_crop) {
-      vf <- sprintf("crop=%d:%d:0:0,format=nv12,hwupload", ew, eh)
-    } else {
-      vf <- "format=nv12,hwupload"
-    }
+    vf <- "format=nv12,hwupload"
   }
 
   args <- c(
@@ -336,6 +375,24 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
   list(width = width, height = height, fps = fps)
 }
 
+# Internal: get video codec name via ffprobe (e.g. "h264", "vp9", "av1")
+.ffmpeg_video_codec <- function(input) {
+  ffprobe <- Sys.which("ffprobe")
+  if (nchar(ffprobe) == 0) return(NA_character_)
+  lines <- tryCatch(
+    suppressWarnings(
+      system2(ffprobe,
+              c("-v", "quiet", "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name",
+                "-of", "default=noprint_wrappers=1", shQuote(input)),
+              stdout = TRUE, stderr = FALSE)
+    ),
+    error = function(e) character(0)
+  )
+  val <- sub("codec_name=", "", grep("^codec_name=", lines, value = TRUE))
+  if (length(val) == 0 || nchar(val) == 0) NA_character_ else val
+}
+
 # Internal: apply tiff_scale then ensure hardware minimum
 # Uses integer multiplier so each pixel maps to an exact NxN block.
 # Final dimensions rounded down to multiple of 8 (hardware macroblock alignment).
@@ -366,6 +423,35 @@ convert_to_av1 <- function(input, output, options = av1r_options()) {
   sh <- sh - (sh %% 8L)
 
   list(width = sw, height = sh, scaled = (mult > 1L))
+}
+
+# Internal: map CRF (0-63) to VAAPI CQP quantizer (0-255)
+# Calibrated empirically on microscopy TIFF stacks (RADV/Mesa av1_vaapi).
+# Uses piecewise linear interpolation between measured equivalence points:
+#   CRF  1 ->  QP  10     CRF  5 ->  QP  15     CRF 10 ->  QP  35
+#   CRF 20 ->  QP  70     CRF 30 ->  QP 110     CRF 40 ->  QP 150
+#   CRF 50 ->  QP 190     CRF 63 ->  QP 255
+.crf_to_vaapi_qp <- function(crf) {
+  stopifnot(is.numeric(crf), length(crf) == 1, crf >= 0, crf <= 63)
+  crf <- as.integer(crf)
+  knots_crf <- c( 0L,  1L,   5L,  10L,  20L,  30L,  40L,  50L,  63L)
+  knots_qp  <- c( 1L, 10L,  15L,  35L,  70L, 110L, 150L, 190L, 255L)
+  as.integer(round(stats::approx(knots_crf, knots_qp, xout = crf, rule = 2)$y))
+}
+
+# Internal: map CPU CRF to Vulkan CRF for TIFF/image input
+# Vulkan CQP compresses more aggressively at low CRF (1-7).
+# Calibrated empirically on microscopy TIFF stacks (RADV, RX 9070):
+#   CPU CRF  1 -> Vulkan  2     CPU CRF  3 -> Vulkan  2
+#   CPU CRF  5 -> Vulkan  3     CPU CRF  8 -> Vulkan  5
+#   CPU CRF 10 -> Vulkan  7     CPU CRF 15 -> Vulkan 11
+#   CPU CRF 20 -> Vulkan 15     CPU CRF 30+ ~= CPU CRF (converge)
+.crf_to_vulkan_crf <- function(crf) {
+  stopifnot(is.numeric(crf), length(crf) == 1, crf >= 0, crf <= 63)
+  crf <- as.integer(crf)
+  knots_cpu    <- c( 0L,  1L,  3L,  5L,  8L, 10L, 15L, 20L, 30L, 40L, 50L, 63L)
+  knots_vulkan <- c( 1L,  2L,  2L,  3L,  5L,  7L, 11L, 15L, 30L, 40L, 50L, 63L)
+  as.integer(round(stats::approx(knots_cpu, knots_vulkan, xout = crf, rule = 2)$y))
 }
 
 # Internal: compute dimensions to meet hardware minimum (no user scale)
