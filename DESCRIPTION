@@ -3,9 +3,11 @@ Type: Package
 Title: 'AV1' Video Encoding for Biological Microscopy Data
 Version: 0.1.3
 Authors@R: c(
-    person("Yuri", "Baramykov",
+        person("Yuri", "Baramykov",
         email = "lbsbmsu@mail.ru",
-        role = c("aut", "cre")))
+        role = c("aut", "cre"),
+        comment = c(ORCID = "0009-0000-7627-4217"))
+    )
 Description: Converts legacy microscopy video formats (H.264/H.265, AVI/MJPEG,
     TIFF stacks) to the modern 'AV1' codec with minimal quality loss. Typical
     use cases include compressing large TIFF stacks from confocal microscopy and
