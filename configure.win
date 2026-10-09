@@ -30,6 +30,22 @@ if [ -n "$VULKAN_SDK" ]; then
   echo "Found Vulkan SDK at: $VULKAN_SDK"
 fi
 
+# FFV1 GPU path: shaders compiled with glslc ($GLSLC or Vulkan SDK)
+FFV1_GPU="no"
+if [ -n "$VULKAN_SDK" ]; then
+  if [ -z "$GLSLC" ] && [ -x "${VULKAN_SDK_FWD}/Bin/glslc.exe" ]; then
+    GLSLC="${VULKAN_SDK_FWD}/Bin/glslc.exe"
+  fi
+  if [ -n "$GLSLC" ] && sh tools/ffv1_spv.sh "$GLSLC"; then
+    FFV1_GPU="yes"
+    VULKAN_CPPFLAGS="$VULKAN_CPPFLAGS -DAV1R_FFV1_GPU"
+    echo "Found glslc: $GLSLC (FFV1 GPU path enabled)"
+  else
+    echo "glslc not found, FFV1 GPU path disabled."
+  fi
+fi
+[ "$FFV1_GPU" = "no" ] && rm -f src/av1r_ffv1_spv.h
+
 sed \
   -e "s|@FFMPEG_CPPFLAGS@|$FFMPEG_CPPFLAGS|g" \
   -e "s|@FFMPEG_LIBS@|$FFMPEG_LIBS|g" \
