@@ -11,3 +11,4 @@
 ^VP_VULKANINFO_.*\.json$
 ^LICENSE\.md$
 ^src/av1r_ffv1_spv\.h$
+^\.github$

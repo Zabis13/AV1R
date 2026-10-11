@@ -102,7 +102,7 @@ archive_tiff <- function(input, output = NULL, fps = 25, slices = c(2L, 2L),
 
 # Page count, size, sample format; errors unless 16-bit single channel.
 .tiff_stack_info <- function(path) {
-  meta <- tiff::readTIFF(path, all = TRUE, payload = FALSE)
+  meta <- .quiet_tiff(tiff::readTIFF(path, all = TRUE, payload = FALSE))
   n <- nrow(meta)
   if (n == 0L) stop("No images in TIFF: ", path)
 
@@ -127,7 +127,7 @@ archive_tiff <- function(input, output = NULL, fps = 25, slices = c(2L, 2L),
 
 # Read pages `idx` as integer array [height, width, length(idx)].
 .tiff_read_frames <- function(path, idx) {
-  pages <- tiff::readTIFF(path, all = idx, as.is = TRUE)
+  pages <- .quiet_tiff(tiff::readTIFF(path, all = idx, as.is = TRUE))
   h <- nrow(pages[[1L]]); w <- ncol(pages[[1L]])
   out <- array(0L, dim = c(h, w, length(idx)))
   for (k in seq_along(pages)) {
@@ -223,7 +223,8 @@ archive_tiff <- function(input, output = NULL, fps = 25, slices = c(2L, 2L),
 
 .ffv1_gpu_device <- function() {
   if (!exists("device", envir = .ffv1_gpu_cache, inherits = FALSE)) {
-    dev <- .Call("R_av1r_ffv1_gpu_device", PACKAGE = "AV1R")
+    dev <- tryCatch(.Call("R_av1r_ffv1_gpu_device", PACKAGE = "AV1R"),
+                    error = function(e) NULL)
     assign("device", if (is.null(dev) || is.na(dev)) NULL else dev,
            envir = .ffv1_gpu_cache)
   }
