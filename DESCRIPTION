@@ -1,7 +1,7 @@
 Package: AV1R
 Type: Package
 Title: 'AV1' Video Encoding for Biological Microscopy Data
-Version: 0.1.4
+Version: 0.1.4.1
 Authors@R: c(
         person("Yuri", "Baramykov",
         email = "lbsbmsu@mail.ru",
